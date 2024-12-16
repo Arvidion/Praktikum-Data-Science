@@ -1,0 +1,187 @@
+---
+title: "DS-Proyek-Akhir"
+author: "Abrar"
+date: "2024-12-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Memuat library yang diperlukan
+library(tm)           # Untuk pengolahan teks
+library(e1071)        # Untuk Naive Bayes
+library(dplyr)        # Untuk manipulasi data
+library(wordcloud)
+library(RColorBrewer)
+library(tidyverse)
+library(tidymodels)
+```
+
+
+1. Data gathering
+```{r}
+#Menyimpan ulasan ke dalam var data
+file_path <- "data-ds.csv"
+data <-read.csv(file_path)
+
+#Mengunduh stopword indonesia
+url <- "https://raw.githubusercontent.com/stopwords-iso/stopwords-id/master/stopwords-id.txt"
+stopwords_indonesia <- suppressWarnings(readLines(url))
+```
+
+
+2. Data Pre-processing
+```{r}
+#. Membersihkan dan mempersiapkan teks (Data Cleaning)
+data_clean <- data[data$komentar != "N/A", ]
+
+
+# Menentukan sentimen awal, menggunakan labeling berdasarkan kata kunci (Rule Base)
+
+positive_keywords <- c("bagus", "keren", "mudah", "cocok", "puas", "nyaman", "praktis", "lumayan", "mantap", "baik", "terima kasih","makasih","makasii","makasi","mksh", "trims","tks","thks", "thanks", "thank", "cepat", "cepet", "cpt", "worth it", "awet", "rapi", "bersih", "suka", "sesuai", "enak", "rekomended", "recommended", "recommend", "berfungsi", "muantabz","mantab","mantep", "mantap","mantull","mantul", "juara", "alhamdulillah", "good", "sukses","affordable", "murah","fast", "gampang", "jos","lancar","ramah","awesome", "semoga", "love","top", "optimis", "kokoh", "kinclong", "sempurna", "markotop", "aman", "simple", "best", "hemat", "ringan", "unyu", "imut", "recomended", "promo", "memuaskan", "easy", "berguna")
+
+negative_keywords <- c("buruk", "jelek", "so so", "tidak", "kurang", "kecewa", "sulit", "lama", "lambat", "lma", "susah", "lepas", "ga bisa","penyok2", "haeduh", "haduh", "gagal", "rusak", "bad quality", "cuma", "kecil", "mungil", "php", "patah","sempit", "mahal", "kemahalan","copot2","copot", "ribet", "kotor","retak","pecah", "masalah", "macet","ringkih", "small", "hard", "sedih", "lemot", "lelet", "butut", "kecewa", "mengecewakan", "cacat", "payah", "worst", "asal", "tipis", "nyangkut", "bekas", "bolong", "minus","bengkok", "salah")
+
+
+data_model = data_clean %>% select(komentar)
+
+data_model <- data_model %>%
+  mutate(
+    positive_count = sapply(komentar, function(comment) {
+      sum(sapply(positive_keywords, function(keyword) grepl(keyword, comment, ignore.case = TRUE)))
+    }),
+    negative_count = sapply(komentar, function(comment) {
+      sum(sapply(negative_keywords, function(keyword) grepl(keyword, comment, ignore.case = TRUE)))
+    })
+  )
+
+data_model <- data_model %>%
+  mutate(
+    sentiment = case_when(
+      positive_count > negative_count ~ "positif",
+      negative_count > positive_count ~ "negatif",
+      TRUE ~ "netral"
+    )
+  )
+
+```
+
+
+3. Data Splitting
+```{r}
+# 4. Membagi data menjadi data pelatihan dan data uji (split)
+set.seed(439)  # Untuk keperluan reproduktifitas
+
+split_data <- initial_split(data_model, prop = 0.8) # 80% untuk pelatihan
+
+train_data <- split_data %>% training()
+test_data <- split_data %>% testing()
+
+nrow(test_data)
+nrow(train_data)
+
+
+```
+
+4, Data Training
+```{r}
+# 5. Melatih model Naive Bayes
+
+
+naive_bayes_model <- naiveBayes(sentiment ~ positive_count + negative_count , 
+                                data = train_data,
+                                prior = c(1/3, 1/3, 1/3))  # Prior seimbang untuk tiga kelas
+
+naive_bayes_model$apriori
+summary(naive_bayes_model)
+```
+
+5. Data Testing
+
+```{r}
+# 6. Menggunakan model untuk prediksi
+predictions <- predict(naive_bayes_model, test_data)
+
+# Menggabungkan hasil prediksi dengan data asli
+result <- data.frame(Actual = test_data$sentiment, Predicted = predictions)
+
+# Melihat hasil prediksi bersama dengan label sebenarnya
+View(result)
+
+```
+
+
+```{r}
+# 7. Evaluasi model
+confusion_matrix <- table(Predicted = predictions, Actual = test_data$sentiment)
+print(confusion_matrix)
+
+# 8. Menghitung akurasi
+accuracy <- sum(predictions == test_data$sentiment) / length(predictions)
+cat("Akurasi model Naive Bayes:", accuracy * 100, "%\n")
+
+```
+
+```{r}
+# Menggabungkan komentar berdasarkan sentimen
+positive_comments <- paste(data_model$komentar[data_model$sentiment == "positif"], collapse = " ")
+negative_comments <- paste(data_model$komentar[data_model$sentiment == "negatif"], collapse = " ")
+
+# Tokenisasi kata untuk masing-masing sentimen
+tokenize_words <- function(text) {
+  text %>%
+    tolower() %>%
+    strsplit("\\s+") %>%
+    unlist()
+}
+
+positive_tokens <- tokenize_words(positive_comments)
+negative_tokens <- tokenize_words(negative_comments)
+
+# Menghitung frekuensi kata
+positive_freq <- sort(table(positive_tokens), decreasing = TRUE)
+negative_freq <- sort(table(negative_tokens), decreasing = TRUE)
+
+# Menyaring stopwords
+positive_freq <- positive_freq[!names(positive_freq) %in% stopwords_indonesia]
+negative_freq <- negative_freq[!names(negative_freq) %in% stopwords_indonesia]
+
+# Membatasi hingga 50 kata teratas
+positive_top50 <- head(positive_freq, 50)
+negative_top50 <- head(negative_freq, 50)
+```
+
+```{r}
+# Wordcloud untuk kata positif
+set.seed(1234)  # Untuk hasil yang konsisten
+wordcloud(
+  words = names(positive_top50),
+  freq = positive_top50,
+  min.freq = 1,
+  max.words = 50,
+  random.order = FALSE,
+  colors = brewer.pal(8, "Greens"),
+  main = "Top 50 Positive Words"
+)
+
+# Wordcloud untuk kata negatif
+set.seed(5678)
+wordcloud(
+  words = names(negative_top50),
+  freq = negative_top50,
+  min.freq = 1,
+  max.words = 50,
+  random.order = FALSE,
+  colors = brewer.pal(8, "Reds"),
+  main = "Top 50 Negative Words"
+)
+
+```
+
+
+
+
+
